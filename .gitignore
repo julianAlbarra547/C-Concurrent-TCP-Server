@@ -53,3 +53,52 @@ dkms.conf
 
 # debug information files
 *.dwo
+# =========================
+# Project specific ignores
+# =========================
+
+# Dataset real (muy grande)
+data/raw/*
+
+# Índices generados por el programa
+data/index/*
+
+# Permitir que las carpetas existan en git
+!data/raw/.gitkeep
+!data/index/.gitkeep
+
+# Archivos temporales
+*.tmp
+*.log
+
+# Carpeta de build si se usa
+build/
+
+# Archivos generados por el programa
+*.bin
+*.index
+
+# =========================
+# Project specific ignores
+# =========================
+
+# Dataset real (muy grande)
+data/raw/*
+
+# Índices generados por el programa
+data/index/*
+
+# Permitir que las carpetas existan en git
+!data/raw/.gitkeep
+!data/index/.gitkeep
+
+# Archivos temporales
+*.tmp
+*.log
+
+# Carpeta de build si se usa
+build/
+
+# Archivos generados por el programa
+*.bin
+*.index# =========================
