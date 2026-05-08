@@ -3,8 +3,7 @@
 
 #include <stdio.h>
 
-#define FIFO_CLIENT_PATH "/tmp/client_fifo"
-#define FIFO_SERVER_PATH "/tmp/server_fifo"
+#define PORT 8080
 typedef struct {
     char title[512];
     char artist[2048];
