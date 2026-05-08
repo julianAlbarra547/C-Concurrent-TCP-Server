@@ -12,7 +12,7 @@
 #define BACKLOG 32
 
 int main(){
-    int sockfd, valid, valid_index, addr_len, identify;
+    int sockfd, valid, addr_len, identify;
     struct sockaddr_in server;
     Query query;
     
@@ -25,8 +25,8 @@ int main(){
     FILE *check = fopen(TABLE_IDX, "rb");
     if (check == NULL) {
         printf("Index file not found. Building index...\n");
-        valid_index = build_index(CSV_FILE, TABLE_IDX, ENTRIES_BIN);
-        if (valid_index == -1) {
+        valid = build_index(CSV_FILE, TABLE_IDX, ENTRIES_BIN);
+        if (valid == -1) {
             fprintf(stderr, "Error building index\n");
             return 1;
         }
@@ -66,6 +66,11 @@ int main(){
         exit(-1);
     }
 
+    valid = listen(sockfd, BACKLOG);
+    if (valid < 0){
+        perror("Listen Failed");
+        exit(-1);
+    }
 
     return 0;
 }
