@@ -9,7 +9,7 @@
 #include <ctype.h>
 #include "common.h"
 #include "csv_reader.h"
-#include "utils.h"
+#include "utils_ui.h"
 
 /* ─── Menu ──────────────────────────────────────────────────────────────── */
 
