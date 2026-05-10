@@ -9,4 +9,6 @@ typedef struct {
     char artist[2048];
 } Query;
 
+int rcv_all(int sockfd, void *buffer, size_t length);
+int send_all(int sockfd, void *buffer, size_t length);
 #endif
