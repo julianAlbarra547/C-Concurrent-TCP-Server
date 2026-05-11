@@ -2,6 +2,7 @@
 #define COMMON_H
 
 #include <stdio.h>
+#include <sys/socket.h>
 
 #define PORT 8080
 typedef struct {

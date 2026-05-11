@@ -7,6 +7,9 @@
 #include <string.h>
 #include <errno.h>
 #include <ctype.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "common.h"
 #include "csv_reader.h"
 #include "utils_ui.h"
@@ -23,7 +26,7 @@ void print_menu(){
 
 /* ─── Opcion 1: Buscar cancion ──────────────────────────────────────────── */
 
-void option1(int fdwrite, int fdread){
+void option1(int sockfd){
     char title[512];
     char artist[2048];
     Query query;
@@ -73,11 +76,16 @@ void option1(int fdwrite, int fdread){
     strncpy(query.title,  title,  sizeof(query.title));
     strncpy(query.artist, artist, sizeof(query.artist));
 
-    write(fdwrite, &identify, sizeof(int));
-    write(fdwrite, &query,    sizeof(Query));
+    if(send_all(sockfd, &identify, sizeof(int)) == -1 || send_all(sockfd, &query, sizeof(Query)) == -1){
+        perror("Error sending search request");
+        return;
+    }
 
     int count;
-    read(fdread, &count, sizeof(int));
+    if(rcv_all(sockfd, &count, sizeof(int)) == -1){
+        perror("Error receiving search response count");
+        return;
+    }
 
     if(count == -1){
         printf("NA - Cancion no encontrada.\n");
@@ -87,14 +95,17 @@ void option1(int fdwrite, int fdread){
     Row result;
 
     for(int i = 0; i < count; i++){
-        read(fdread, &result, sizeof(Row));
+        if(rcv_all(sockfd, &result, sizeof(Row)) == -1){
+            perror("Error receiving search result row");
+            return;
+        }
         print_row(&result);
     }
 }
 
 /* ─── Opcion 2: Agregar registro ────────────────────────────────────────── */
 
-void option2(int fdwrite, int fdread){
+void option2(int sockfd){
     Row new_row;
     int identify = 2;
     char buff[64];
@@ -214,11 +225,16 @@ void option2(int fdwrite, int fdread){
         invalid = 0;
     }
 
-    write(fdwrite, &identify, sizeof(int));
-    write(fdwrite, &new_row,  sizeof(Row));
+    if(send_all(sockfd, &identify, sizeof(int)) == -1 || send_all(sockfd, &new_row, sizeof(Row)) == -1){
+        perror("Error sending insert request");
+        return;
+    }
 
     int confirm;
-    read(fdread, &confirm, sizeof(int));
+    if(rcv_all(sockfd, &confirm, sizeof(int)) == -1){
+        perror("Error receiving insert confirmation");
+        return;
+    }
 
     if(confirm == 1){
         printf("Registro agregado exitosamente.\n");
@@ -229,25 +245,52 @@ void option2(int fdwrite, int fdread){
 
 /* ─── Main ──────────────────────────────────────────────────────────────── */
 
-int main(){
-    int fdwrite, fdread;
+int main(int argc, char **argv){
+    int sockfd;
     short option;
     short start = 1;
     char buff[8];
 
-    fdwrite = open(FIFO_CLIENT_PATH, O_WRONLY);
-    if(fdwrite == -1){
-        perror("Open write fifo");
-        close(fdwrite);
+    const char *server_ip = "127.0.0.1";
+    const char *env_server_ip = getenv("P2_SERVER_IP");
+    if(env_server_ip != NULL && env_server_ip[0] != '\0'){
+        server_ip = env_server_ip;
+    }
+    if(argc >= 2 && argv[1] != NULL && argv[1][0] != '\0'){
+        server_ip = argv[1];
+    }
+
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if(sockfd < 0){
+        perror("Socket creation failed");
         return -1;
     }
 
-    fdread = open(FIFO_SERVER_PATH, O_RDONLY);
-    if(fdread == -1){
-        perror("Open read fifo");
-        close(fdread);
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(PORT);
+    if(inet_pton(AF_INET, server_ip, &server_addr.sin_addr) != 1){
+        fprintf(stderr, "Invalid server IP: %s\n", server_ip);
+        close(sockfd);
         return -1;
     }
+
+    if(connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0){
+        perror("Connect failed");
+        close(sockfd);
+        return -1;
+    }
+
+    char local_ip[INET_ADDRSTRLEN] = {0};
+    struct sockaddr_in local_addr;
+    socklen_t local_len = sizeof(local_addr);
+    if(getsockname(sockfd, (struct sockaddr *)&local_addr, &local_len) == 0){
+        inet_ntop(AF_INET, &local_addr.sin_addr, local_ip, sizeof(local_ip));
+    } else {
+        strncpy(local_ip, "unknown", sizeof(local_ip) - 1);
+    }
+    printf("Conectado al servidor %s:%d (IP local: %s)\n", server_ip, PORT, local_ip);
 
     while(start){
         print_menu();
@@ -257,10 +300,10 @@ int main(){
 
         switch(option){
             case 1:
-                option1(fdwrite, fdread);
+                option1(sockfd);
                 break;
             case 2:
-                option2(fdwrite, fdread);
+                option2(sockfd);
                 break;
             case 3:
                 printf("Saliendo del programa...\n");
@@ -271,7 +314,6 @@ int main(){
         }
     }
 
-    close(fdwrite);
-    close(fdread);
+    close(sockfd);
     return 0;
 }
