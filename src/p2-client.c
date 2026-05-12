@@ -330,12 +330,12 @@ int main(int argc, char **argv){
                 break;
             case 3:
                 printf("Saliendo del programa...\n");
+                int bye = 0;
+                send_all(sockfd, &bye, sizeof(int));
                 start = 0;
-                break;
             default:
                 printf("Opcion no valida. Intente nuevamente.\n");
         }
-        start = 1;
     }
 
     close(sockfd);

@@ -47,6 +47,7 @@ client:
 		-lm
 
 run: all
+	-pkill -f p2-server 2>/dev/null; sleep 1
 	./bin/p2-server & \
 	SERVER_PID=$$!; \
 	echo "Servidor PID: $$SERVER_PID"; 

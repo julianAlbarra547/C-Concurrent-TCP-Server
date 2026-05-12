@@ -74,259 +74,195 @@ void *process_query(void *arg){
     Query query;
     int identify;
 
-    if (rcv_all(client_sock, &identify, sizeof(int)) == -1){
-        fprintf(stderr, "Error receiving identify from client\n");
-        close(client_sock);
-        sem_post(client_count_sem);
-        free(arg);
-        return NULL;
-    }
+    while(1){
 
-    if (identify == 1){
-        if(rcv_all(client_sock, &query, sizeof(Query)) == -1){
+        if (rcv_all(client_sock, &identify, sizeof(int)) == -1){
             fprintf(stderr, "Error receiving identify from client\n");
-            close(client_sock);
-            sem_post(client_count_sem);
-            free(arg);
-            return NULL;
+            break;
         }
 
-        char buffer[4096];
-        format_log_search(buffer, query.title, query.artist, ip_client, sizeof(buffer));
-
-        pthread_mutex_lock(log_mutex);
-        fwrite(buffer, sizeof(char), strlen(buffer), log_file);
-        fwrite("\n", sizeof(char), 1, log_file);
-        fflush(log_file);
-        pthread_mutex_unlock(log_mutex);
-
-        if(strlen(query.title) == 0){
-            fprintf(stderr, "Invalid query: Title and Artist cannot be empty.\n");
-            Row empty;
-            memset(&empty, 0, sizeof(Row));
-            empty.id = -1;
-            if(send_all(client_sock, &empty, sizeof(Row)) == -1){
-                fprintf(stderr, "Error sending response to client\n");
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
-            }
-            free(arg);
-            sem_post(client_count_sem);
-            close(client_sock);
-            return NULL;
-        }
-
-        if(strlen(query.artist) == 0){
-            Hash_node nodes[5];
-            Row results[5];
-
-            pthread_mutex_lock(hash_mutex);
-            int count = search_range_node(table_hash, entries_file, query.title, nodes, 5);
-            pthread_mutex_unlock(hash_mutex);
-
-            if(count == -1){
-                fprintf(stderr, "Error searching for title: %s\n", query.title);
-                if(send_all(client_sock, &count, sizeof(int)) == -1){
-                    fprintf(stderr, "Error sending response to client\n");
-                    free(arg);
-                    sem_post(client_count_sem);
-                    close(client_sock);
-                    return NULL;
-                }
-            } else if(count <= 5){
-                if(send_all(client_sock, &count, sizeof(int)) == -1){
-                    fprintf(stderr, "Error sending response to client\n");
-                    free(arg);
-                    sem_post(client_count_sem);
-                    close(client_sock);
-                    return NULL;
-                }
+        if (identify == 1){
+            if(rcv_all(client_sock, &query, sizeof(Query)) == -1){
+                fprintf(stderr, "Error receiving identify from client\n");
+                break;
             }
 
-            pthread_mutex_lock(csv_mutex);
-            for (int i = 0; i < count; i++) {
-                    Row *row = read_csv(csv, nodes[i].offset);
-                    if (row == NULL) {
-                        fprintf(stderr, "Error reading row from CSV at offset: %ld\n", nodes[i].offset);
-                        continue;
+            char buffer[4096];
+            format_log_search(buffer, query.title, query.artist, ip_client, sizeof(buffer));
+
+            pthread_mutex_lock(log_mutex);
+            fwrite(buffer, sizeof(char), strlen(buffer), log_file);
+            fwrite("\n", sizeof(char), 1, log_file);
+            fflush(log_file);
+            pthread_mutex_unlock(log_mutex);
+
+            if(strlen(query.title) == 0){
+                fprintf(stderr, "Invalid query: Title and Artist cannot be empty.\n");
+                Row empty;
+                memset(&empty, 0, sizeof(Row));
+                empty.id = -1;
+                if(send_all(client_sock, &empty, sizeof(Row)) == -1){
+                    fprintf(stderr, "Error sending response empty to client\n");
+                    break;
+                }
+                continue;
+            }
+
+            if(strlen(query.artist) == 0){
+                Hash_node nodes[5];
+                Row results[5];
+
+                pthread_mutex_lock(hash_mutex);
+                int count = search_range_node(table_hash, entries_file, query.title, nodes, 5);
+                pthread_mutex_unlock(hash_mutex);
+
+                if(count == -1){
+                    fprintf(stderr, "Error searching for title: %s\n", query.title);
+                    if(send_all(client_sock, &count, sizeof(int)) == -1){
+                        fprintf(stderr, "Error sending response to client\n");
+                        break;
                     }
-                    results[i] = *row;
+                } else if(count <= 5){
+                    if(send_all(client_sock, &count, sizeof(int)) == -1){
+                        fprintf(stderr, "Error sending response to client\n");
+                        break;
+                    }
+                }
+
+                pthread_mutex_lock(csv_mutex); //Podría eliminarse este mutex | No lo considero una sección critica
+                for (int i = 0; i < count; i++) {
+                        Row *row = read_csv(csv, nodes[i].offset);
+                        if (row == NULL) {
+                            fprintf(stderr, "Error reading row from CSV at offset: %ld\n", nodes[i].offset);
+                            continue;
+                        }
+                        results[i] = *row;
+                        free(row);
+                }
+                pthread_mutex_unlock(csv_mutex);
+                
+                if(send_all(client_sock, &results, sizeof(Row) * count) == -1){
+                    fprintf(stderr, "Error sending response to client\n");
+                    break;
+                }
+
+            } else {
+
+                pthread_mutex_lock(hash_mutex);
+                long offset = search_node(table_hash, entries_file, query.title, query.artist);
+                pthread_mutex_unlock(hash_mutex);
+                
+                if(offset == -1){
+                    fprintf(stderr, "No entry found for Title='%s' and Artist='%s'\n", query.title, query.artist);
+                    int confirm = -1;
+                    if(send_all(client_sock, &confirm, sizeof(int)) == -1){
+                        fprintf(stderr, "Error sending response -1 to client\n");
+                        break;
+                    }
+                    continue;
+                }
+
+                int count = 1;
+
+                if(send_all(client_sock, &count, sizeof(int)) == -1){
+                    fprintf(stderr, "Error sending response to client\n");
+                    break;
+                }
+                pthread_mutex_lock(csv_mutex);
+                Row *row = read_csv(csv, offset);
+                pthread_mutex_unlock(csv_mutex);
+
+                if(send_all(client_sock, row, sizeof(Row)) == -1){
+                    fprintf(stderr, "Error sending response row to client\n");
                     free(row);
+                    break;
+                }
             }
-            pthread_mutex_unlock(csv_mutex);
-            
-            if(send_all(client_sock, &results, sizeof(Row) * count) == -1){
-                fprintf(stderr, "Error sending response to client\n");
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
+        } else if (identify == 2){
+
+            Row new_row;
+            if (rcv_all(client_sock, &new_row, sizeof(Row)) == -1){
+                fprintf(stderr, "Error receiving new row from client\n");
+                break;
             }
 
-        } else {
-
-            pthread_mutex_lock(hash_mutex);
-            long offset = search_node(table_hash, entries_file, query.title, query.artist);
-            pthread_mutex_unlock(hash_mutex);
-            
-            if(offset == -1){
-                fprintf(stderr, "No entry found for Title='%s' and Artist='%s'\n", query.title, query.artist);
-                int confirm = -1;
+            char norm_title[512], norm_artist[2048];
+            if (normalize_string(new_row.title, norm_title, sizeof(norm_title)) != 0){
+                fprintf(stderr, "Error normalizing title: %s\n", new_row.title);
+                int confirm = 0;
                 if(send_all(client_sock, &confirm, sizeof(int)) == -1){
                     fprintf(stderr, "Error sending response to client\n");
-                    free(arg);
-                    sem_post(client_count_sem);
-                    close(client_sock);
-                    return NULL;
                 }
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
+                break;
             }
 
-            int count = 1;
-
-            if(send_all(client_sock, &count, sizeof(int)) == -1){
-                fprintf(stderr, "Error sending response to client\n");
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
+            if (normalize_string(new_row.artist, norm_artist, sizeof(norm_artist)) != 0){
+                fprintf(stderr, "Error normalizing artist: %s\n", new_row.artist);
+                int confirm = 0;
+                if(send_all(client_sock, &confirm, sizeof(int)) == -1){
+                    fprintf(stderr, "Error sending response to client\n");
+                }
+                break;
             }
-            pthread_mutex_lock(csv_mutex);
-            Row *row = read_csv(csv, offset);
+
+            pthread_mutex_lock(hash_mutex);
+            if (node_exists(table_hash, entries_file, norm_title, norm_artist)) {
+                fprintf(stderr, "Error: A song with Title='%s' and Artist='%s' already exists.\n", new_row.title, new_row.artist);
+                int confirm = 0;
+                if(send_all(client_sock, &confirm, sizeof(int)) == -1){
+                    fprintf(stderr, "Error sending response to client\n");
+                    break;
+                }
+                continue;
+            }
+            pthread_mutex_unlock(hash_mutex);
+
+            pthread_mutex_lock(csv_mutex);   // Sección Critica importante
+            fseek(csv, 0, SEEK_END);
+            long offset = ftell(csv);
+            fprintf(csv,
+                    "%d,%s,%d,%s,%s,%s,%lld,%s,%f,%s\n",
+                    new_row.id,
+                    new_row.title,
+                    new_row.rank,
+                    new_row.date,
+                    new_row.artist,
+                    new_row.url,
+                    new_row.streams,
+                    new_row.album,
+                    new_row.duration,
+                    new_row.explicito);
+            fflush(csv);
             pthread_mutex_unlock(csv_mutex);
 
-            if(send_all(client_sock, row, sizeof(Row)) == -1){
-                fprintf(stderr, "Error sending response row to client\n");
-                if(send_all(client_sock, &count, sizeof(int)) == -1){
-                    fprintf(stderr, "Error sending response to client\n");
-                    free(arg);
-                    free(row);
-                    sem_post(client_count_sem);
-                    close(client_sock);
-                    return NULL;
-                }
-                free(arg);
-                free(row);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
+            pthread_mutex_lock(hash_mutex);  // Sección Critica importante
+            insert_node(table_hash, entries_file, norm_title, norm_artist, offset);
+
+            FILE *idx = fopen(TABLE_IDX, "wb");
+            if(idx == NULL){
+                fprintf(stderr, "Error abriendo archivo de índice para actualización\n");
+                pthread_mutex_unlock(hash_mutex);
+                int confirm = 0;
+                send_all(client_sock, &confirm, sizeof(int));
+                break;
             }
-
-            free(row);
-        }
-    } else if (identify == 2){
-
-        Row new_row;
-        if (rcv_all(client_sock, &new_row, sizeof(Row)) == -1){
-            fprintf(stderr, "Error receiving new row from client\n");
-            close(client_sock);
-            sem_post(client_count_sem);
-            free(arg);
-            return NULL;
-        }
-
-        char norm_title[512], norm_artist[2048];
-        if (normalize_string(new_row.title, norm_title, sizeof(norm_title)) != 0){
-            fprintf(stderr, "Error normalizing title: %s\n", new_row.title);
-            int confirm = 0;
-            if(send_all(client_sock, &confirm, sizeof(int)) == -1){
-                fprintf(stderr, "Error sending response to client\n");
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
-            }
-            free(arg);
-            sem_post(client_count_sem);
-            close(client_sock);
-            return NULL;
-        }
-
-        if (normalize_string(new_row.artist, norm_artist, sizeof(norm_artist)) != 0){
-            fprintf(stderr, "Error normalizing artist: %s\n", new_row.artist);
-            int confirm = 0;
-            if(send_all(client_sock, &confirm, sizeof(int)) == -1){
-                fprintf(stderr, "Error sending response to client\n");
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
-            }
-            free(arg);
-            sem_post(client_count_sem);
-            close(client_sock);
-            return NULL;
-        }
-
-        pthread_mutex_lock(hash_mutex);
-        if (node_exists(table_hash, entries_file, norm_title, norm_artist)) {
-            fprintf(stderr, "Error: A song with Title='%s' and Artist='%s' already exists.\n", new_row.title, new_row.artist);
-            int confirm = 0;
-            if(send_all(client_sock, &confirm, sizeof(int)) == -1){
-                fprintf(stderr, "Error sending response to client\n");
-                free(arg);
-                sem_post(client_count_sem);
-                close(client_sock);
-                return NULL;
-            }
-            free(arg);
-            sem_post(client_count_sem);
-            close(client_sock);
-            return NULL;
-        }
-        pthread_mutex_unlock(hash_mutex);
-
-        pthread_mutex_lock(csv_mutex);
-        fseek(csv, 0, SEEK_END);
-        long offset = ftell(csv);
-        fprintf(csv,
-                "%d,%s,%d,%s,%s,%s,%lld,%s,%f,%s\n",
-                new_row.id,
-                new_row.title,
-                new_row.rank,
-                new_row.date,
-                new_row.artist,
-                new_row.url,
-                new_row.streams,
-                new_row.album,
-                new_row.duration,
-                new_row.explicito);
-        fflush(csv);
-        pthread_mutex_unlock(csv_mutex);
-
-        pthread_mutex_lock(hash_mutex);
-        insert_node(table_hash, entries_file, norm_title, norm_artist, offset);
-
-        FILE *idx = fopen(TABLE_IDX, "wb");
-        if(idx == NULL){
-            fprintf(stderr, "Error abriendo archivo de índice para actualización\n");
+            fwrite(table_hash, sizeof(long), HASH_TABLE_SIZE, idx);
+            fclose(idx);
             pthread_mutex_unlock(hash_mutex);
-            int confirm = 0;
+
+            int confirm = 1;
             send_all(client_sock, &confirm, sizeof(int));
-            free(arg);
-            sem_post(client_count_sem);
-            close(client_sock);
-            return NULL;
+
+            pthread_mutex_lock(log_mutex);
+            char buffer[4096];
+            format_log_insert(buffer, new_row.title, new_row.artist, ip_client, sizeof(buffer));
+            fwrite(buffer, sizeof(char), strlen(buffer), log_file);
+            fwrite("\n", sizeof(char), 1, log_file);
+            fflush(log_file);
+            pthread_mutex_unlock(log_mutex);
+        } else if (identify == 0){
+            break;
         }
-        fwrite(table_hash, sizeof(long), HASH_TABLE_SIZE, idx);
-        fclose(idx);
-        pthread_mutex_unlock(hash_mutex);
-
-        int confirm = 1;
-        send_all(client_sock, &confirm, sizeof(int));
-
-        pthread_mutex_lock(log_mutex);
-        char buffer[4096];
-        format_log_insert(buffer, new_row.title, new_row.artist, ip_client, sizeof(buffer));
-        fwrite(buffer, sizeof(char), strlen(buffer), log_file);
-        fwrite("\n", sizeof(char), 1, log_file);
-        fflush(log_file);
-        pthread_mutex_unlock(log_mutex);
     }
 
     free(arg);
