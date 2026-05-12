@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <strings.h>
+#include <string.h>
 #include <unistd.h>
 #include "common.h"
 #include "hash.h"
@@ -17,7 +17,7 @@
 
 #define BACKLOG 32
 #define MAX_CLIENTS 32
-#define PATH_LOG "../data/log/log.txt"
+#define PATH_LOG "data/log/log.txt"
 
 sem_t *client_count_sem;
 
@@ -49,13 +49,13 @@ void format_log_search(char *buffer, char *title, char *artist, char *ip_client,
 void format_log_insert(char *buffer, char *title, char *artist, char *ip_client, size_t size_buffer){
 
     time_t now;
-    struct tm *info;
+    struct tm info;
     char buff[100];
 
     time(&now);
-    info = localtime_r(&now, &info);
+    localtime_r(&now, &info);
 
-    strftime(buff, sizeof(buff), "%Y%m%dT%H%M%S", info);
+    strftime(buff, sizeof(buff), "%Y%m%dT%H%M%S", &info);
     snprintf(buffer, size_buffer, "[Fecha %s] Cliente [%s] [inserción - Titulo: %s - Artista: %s]", buff, ip_client, title, artist);
 }
 

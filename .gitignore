@@ -81,3 +81,7 @@ build/
 # Archivos generados por el programa
 *.bin
 *.index
+
+# Ejecutables
+bin/p2-client
+bin/p2-server

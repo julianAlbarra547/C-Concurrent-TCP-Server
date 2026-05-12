@@ -28,15 +28,15 @@
 void print_menu() {
     printf("\n");
     printf(PURPLE "  ╔══════════════════════════════════════╗\n" RESET);
-    printf(PURPLE "  ║" BOLD WHITE "       ♪  CORDILLERAS SOUND  ♪       " RESET PURPLE "║\n" RESET);
-    printf(PURPLE "  ║" CYAN "     Sistema de gestión musical      " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ║" BOLD WHITE "       ♪  CORDILLERAS SOUND  ♪       " RESET PURPLE " ║\n" RESET);
+    printf(PURPLE "  ║" CYAN "     Sistema de gestión musical      " RESET PURPLE " ║\n" RESET);
     printf(PURPLE "  ╠══════════════════════════════════════╣\n" RESET);
     printf(PURPLE "  ║" RESET "                                      " PURPLE "║\n" RESET);
-    printf(PURPLE "  ║  " YELLOW "Seleccione una opción:" RESET "               " PURPLE "║\n" RESET);
+    printf(PURPLE "  ║  " YELLOW "Seleccione una opción:" RESET "              " PURPLE "║\n" RESET);
     printf(PURPLE "  ║" RESET "                                      " PURPLE "║\n" RESET);
-    printf(PURPLE "  ║  " CYAN "[ 1 ]" WHITE "  Buscar canción              " RESET PURPLE "║\n" RESET);
-    printf(PURPLE "  ║  " GREEN "[ 2 ]" WHITE "  Agregar canción             " RESET PURPLE "║\n" RESET);
-    printf(PURPLE "  ║  " RED   "[ 3 ]" WHITE "  Salir                       " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ║  " CYAN "[ 1 ]" WHITE "  Buscar canción              " RESET PURPLE " ║\n" RESET);
+    printf(PURPLE "  ║  " GREEN "[ 2 ]" WHITE "  Agregar canción            " RESET PURPLE "  ║\n" RESET);
+    printf(PURPLE "  ║  " RED   "[ 3 ]" WHITE "  Salir                      " RESET PURPLE "  ║\n" RESET);
     printf(PURPLE "  ║" RESET "                                      " PURPLE "║\n" RESET);
     printf(PURPLE "  ╚══════════════════════════════════════╝\n" RESET);
     printf(YELLOW "  Elige una opción: " RESET);
@@ -335,6 +335,7 @@ int main(int argc, char **argv){
             default:
                 printf("Opcion no valida. Intente nuevamente.\n");
         }
+        start = 1;
     }
 
     close(sockfd);
