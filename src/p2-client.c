@@ -15,13 +15,31 @@
 #include "utils_ui.h"
 
 /* ─── Menu ──────────────────────────────────────────────────────────────── */
+#define RESET   "\033[0m"
+#define BOLD    "\033[1m"
+#define PURPLE  "\033[35m"
+#define CYAN    "\033[36m"
+#define GREEN   "\033[32m"
+#define YELLOW  "\033[33m"
+#define RED     "\033[31m"
+#define WHITE   "\033[97m"
+#define BG_DARK "\033[48;5;17m"
 
-void print_menu(){
-    printf("\nBienvenido! Seleccione una opcion:\n");
-    printf("1) Buscar cancion.\n");
-    printf("2) Agregar registro.\n");
-    printf("3) Salir\n");
-    printf("Elegir opcion: ");
+void print_menu() {
+    printf("\n");
+    printf(PURPLE "  ╔══════════════════════════════════════╗\n" RESET);
+    printf(PURPLE "  ║" BOLD WHITE "       ♪  CORDILLERAS SOUND  ♪       " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ║" CYAN "     Sistema de gestión musical      " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ╠══════════════════════════════════════╣\n" RESET);
+    printf(PURPLE "  ║" RESET "                                      " PURPLE "║\n" RESET);
+    printf(PURPLE "  ║  " YELLOW "Seleccione una opción:" RESET "               " PURPLE "║\n" RESET);
+    printf(PURPLE "  ║" RESET "                                      " PURPLE "║\n" RESET);
+    printf(PURPLE "  ║  " CYAN "[ 1 ]" WHITE "  Buscar canción              " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ║  " GREEN "[ 2 ]" WHITE "  Agregar canción             " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ║  " RED   "[ 3 ]" WHITE "  Salir                       " RESET PURPLE "║\n" RESET);
+    printf(PURPLE "  ║" RESET "                                      " PURPLE "║\n" RESET);
+    printf(PURPLE "  ╚══════════════════════════════════════╝\n" RESET);
+    printf(YELLOW "  Elige una opción: " RESET);
 }
 
 /* ─── Opcion 1: Buscar cancion ──────────────────────────────────────────── */
@@ -88,18 +106,23 @@ void option1(int sockfd){
     }
 
     if(count == -1){
-        printf("NA - Cancion no encontrada.\n");
+        printf("La cancion no fue encontrada.\n");
         return;
     }
 
     Row result;
-
-    for(int i = 0; i < count; i++){
-        if(rcv_all(sockfd, &result, sizeof(Row)) == -1){
-            perror("Error receiving search result row");
-            return;
-        }
+    if (count == 1){
+        rcv_all(sockfd, &result, sizeof(Row));
         print_row(&result);
+    } else{
+        printf("Se encontraron", count, "resultados:\n");
+        for(int i = 0; i < count; i++){
+            if(rcv_all(sockfd, &result, sizeof(Row)) == -1){
+                perror("Error receiving search result row");
+                return;
+            }
+            print_row(&result);
+        }
     }
 }
 

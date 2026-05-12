@@ -36,13 +36,13 @@ typedef struct query_args{
 void format_log_search(char *buffer, char *title, char *artist, char *ip_client, size_t size_buffer){
 
     time_t now;
-    struct tm *info;
+    struct tm info;
     char buff[100];
 
     time(&now);
-    info = localtime_r(&now, &info);
+    localtime_r(&now, &info);
 
-    strftime(buff, sizeof(buff), "%Y%m%dT%H%M%S", info);
+    strftime(buff, sizeof(buff), "%Y%m%dT%H%M%S", &info);
     snprintf(buffer, size_buffer, "[Fecha %s] Cliente [%s] [búsqueda - Titulo: %s - Artista: %s]", buff, ip_client, title, artist);
 }
 
