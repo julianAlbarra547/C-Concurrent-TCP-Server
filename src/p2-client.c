@@ -115,7 +115,7 @@ void option1(int sockfd){
         rcv_all(sockfd, &result, sizeof(Row));
         print_row(&result);
     } else{
-        printf("Se encontraron", count, "resultados:\n");
+        printf("Se encontraron %d resultados:\n", count);
         for(int i = 0; i < count; i++){
             if(rcv_all(sockfd, &result, sizeof(Row)) == -1){
                 perror("Error receiving search result row");
@@ -333,8 +333,14 @@ int main(int argc, char **argv){
                 int bye = 0;
                 send_all(sockfd, &bye, sizeof(int));
                 start = 0;
+                break;
             default:
                 printf("Opcion no valida. Intente nuevamente.\n");
+        }
+
+        if(start!=0){
+            printf(RESET RED"¿DESEAS REGRESAR AL MENÚ PRINCIPAL?" RESET" (Presiona cualquier letra para continuar) \n");
+            //Revisar como hacer esta parte
         }
     }
 
