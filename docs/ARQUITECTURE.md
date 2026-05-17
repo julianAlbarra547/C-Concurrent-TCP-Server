@@ -2,24 +2,26 @@
 
 ## Visión General
 
-El sistema está compuesto por dos procesos independientes no emparentados que se comunican entre sí para gestionar búsquedas sobre un dataset CSV de Spotify de aproximadamente 4 GB.
+El sistema está compuesto por dos programas independientes — un servidor y un cliente — que se comunican a través de la red mediante **sockets TCP**. El servidor gestiona búsquedas e inserciones sobre un dataset CSV de Spotify de aproximadamente 4 GB, atendiendo hasta 32 clientes de forma concurrente mediante hilos POSIX.
 
 ```
-┌─────────────────┐                    ┌─────────────────────┐
-│   ui_process    │ ←── FIFOs (IPC) ──→│   csv_process       │
-│                 │                    │                      │
-│  Interfaz de    │                    │  Búsqueda en índice  │
-│  usuario        │                    │  hash + lectura CSV  │
-└─────────────────┘                    └─────────────────────┘
-                                                │
-                              ┌─────────────────┼─────────────────┐
-                              │                 │                 │
-                     spotify_idx.bin   spotify_entries.bin   spotify_data.csv
-                     (tabla hash,      (nodos del índice,    (dataset, 4 GB,
-                      80 KB en RAM)     en disco)             solo lectura)
+┌─────────────────┐                        ┌──────────────────────────────────────┐
+│   p2-client     │ ←── TCP (puerto 8080) ──│   p2-server                          │
+│                 │                        │                                      │
+│  Interfaz de    │                        │  hilo principal: acepta conexiones   │
+│  usuario        │                        │  hilo por cliente: atiende queries   │
+└─────────────────┘                        └──────────────────────────────────────┘
+                                                            │
+                                        ┌───────────────────┼───────────────────┐
+                                        │                   │                   │
+                               spotify_idx.bin   spotify_entries.bin   spotify_data.csv
+                               (tabla hash,      (nodos del índice,    (dataset, ~4 GB,
+                                80 KB en RAM)     en disco)             lectura/escritura)
 ```
 
-La comunicación entre procesos se realiza mediante ** FIFOs nombrados**. La UI envía primero un entero identificador de operación y luego la estructura de datos correspondiente. El servidor siempre responde, incluso en casos de error. Para el diseño detallado del IPC ver [IPC_DESIGN.md](IPC_DESIGN.md).
+La comunicación se realiza de forma binaria mediante las funciones `send_all()` y `rcv_all()` definidas en `common.c`. El cliente envía primero un entero identificador de operación y luego la estructura de datos correspondiente. El servidor siempre responde, incluso en casos de error. Para el diseño detallado de la comunicación ver [SOCKET_DESIGN.md](SOCKET_DESIGN.md).
+
+---
 
 ## Módulos implementados
 
@@ -38,7 +40,7 @@ typedef struct {
     short      rank;
     char       date[16];
     char       artist[2048];
-    char       url[64];
+    char       url[128];
     long long  streams;
     char       album[512];
     double     duration;
@@ -58,8 +60,10 @@ typedef struct {
 
 **Decisiones de diseño:**
 
-- El parser maneja campos entre comillas dobles para soportar valores con comas internas, como artistas colaborativos: "Bonny Cepeda, Peter Cruz, Ray Polanco".
-- Los tamaños de los buffers se determinaron analizando el máximo real de cada columna con un script Python (realizado con IA) sobre el dataset completo.
+- El parser maneja campos entre comillas dobles para soportar valores con comas internas, como artistas colaborativos: `"Bonny Cepeda, Peter Cruz, Ray Polanco"`.
+- Los tamaños de los buffers se determinaron analizando el máximo real de cada columna con un script Python sobre el dataset completo.
+
+---
 
 ### 2. hash
 
@@ -85,22 +89,24 @@ Los nodos no viven en RAM sino en `spotify_entries.bin`. La tabla hash en RAM es
 | Función | Descripción |
 |---|---|
 | `hash(title)` | Calcula el cajón usando djb2 |
-| `node_exists(table, entries, normalized_title, normalized_artist)` | Verifica si la combinación título+artista ya existe, retorna 1 de ser así y 0 si no  |
-| `insert_node(table, entries, normalized_title, normalized_artist, offset)` | Inserta un nodo nuevo  |
-| `normalize_string(in, out, size)` | Convierte a minúsculas para búsqueda insensible |
+| `normalize_string(in, out, size)` | Convierte a minúsculas para búsqueda insensible a mayúsculas |
 | `create_table(table)` | Inicializa todos los cajones a -1 |
-| `build_index(csv_path, idx_path, entries_path)` | Lee el CSV, deduplica por título+artista y genera `spotify_idx.bin` y `spotify_entries.bin` |
+| `node_exists(table, entries, title, artist)` | Verifica si la combinación título+artista ya existe |
+| `insert_node(table, entries, title, artist, offset)` | Inserta un nodo nuevo al inicio de la lista del cajón |
+| `build_index(csv_path, idx_path, entries_path)` | Lee el CSV, deduplica por título+artista y genera los archivos de índice |
 | `load_table(idx_path, table)` | Carga `spotify_idx.bin` en RAM (80 KB) |
-| `search_node(table, entries, title, artist)` | Busca por título y artista recorriendo nodos en disco, retorna offset en el CSV o -1 |
-| `search_range_node(table, entries, title, list, size)` | Busca hasta N nodos por título, retorna el conteo |
+| `search_node(table, entries, title, artist)` | Búsqueda exacta por título y artista; retorna offset en el CSV o -1 |
+| `search_range_node(table, entries, title, list, size)` | Búsqueda por título sin artista; retorna hasta N coincidencias |
 
 Para el diseño detallado del módulo hash ver [HASH_DESIGN.md](HASH_DESIGN.md).
 
-### 3. hash_process
+---
 
-**Archivo:** `hash_process.c`
+### 3. p2-server
 
-**Responsabilidad:** Proceso servidor que gestiona el índice hash, atiende búsquedas e inserciones recibidas por FIFO y mantiene el CSV y el índice actualizados.
+**Archivo:** `p2-server.c`
+
+**Responsabilidad:** Proceso servidor que gestiona el índice hash, atiende búsquedas e inserciones recibidas por TCP y mantiene el CSV y el índice actualizados. Soporta hasta 32 clientes concurrentes mediante un hilo POSIX por cliente y un semáforo de conteo.
 
 **Flujo de arranque:**
 
@@ -109,12 +115,23 @@ Para el diseño detallado del módulo hash ver [HASH_DESIGN.md](HASH_DESIGN.md).
 2. Verificar si el índice ya existe:
    - Si no existe → build_index() desde el CSV completo
    - Si existe    → omitir construcción
-3. Crear los FIFOs si no existen
-4. Abrir los FIFOs y esperar conexión de la UI
-5. Cargar la tabla hash en RAM con load_table()
-6. Abrir entries.bin
-7. Entrar en loop de atención de solicitudes
+3. Cargar la tabla hash en RAM con load_table() (80 KB en stack)
+4. Abrir spotify_entries.bin en modo rb+
+5. Abrir el archivo de log en modo append
+6. Crear el socket TCP, bind en puerto 8080, listen con backlog 32
+7. Inicializar el semáforo (MAX_CLIENTS = 32) y los mutexes
+8. Entrar en loop: accept → sem_wait → crear hilo → pthread_detach
 ```
+
+**Concurrencia:**
+
+| Mecanismo | Propósito |
+|---|---|
+| `pthread_t` por cliente | Cada conexión se atiende en un hilo independiente |
+| `sem_t client_count_sem` | Limita el total de clientes activos a 32 |
+| `pthread_mutex_t hash_mutex` | Protege lectura/escritura del índice hash y entries.bin |
+| `pthread_mutex_t csv_mutex` | Protege lectura/escritura del archivo CSV |
+| `pthread_mutex_t log_mutex` | Protege escritura del archivo de log |
 
 **Operaciones que atiende:**
 
@@ -122,69 +139,91 @@ Para el diseño detallado del módulo hash ver [HASH_DESIGN.md](HASH_DESIGN.md).
 |---|---|---|---|
 | 1 | Búsqueda | `Query` (título + artista opcional) | `int count` + `count` Rows |
 | 2 | Inserción | `Row` completo | `int confirm` (1=éxito, 0=error) |
+| 0 | Desconexión | — | cierra el hilo limpiamente |
+
+**Formato de log:**
+
+```
+[Fecha YYYYMMDDTHHMMSS] Cliente [IP] [búsqueda - Titulo: X - Artista: Y]
+[Fecha YYYYMMDDTHHMMSS] Cliente [IP] [inserción - Titulo: X - Artista: Y]
+```
 
 ---
 
+### 4. p2-client
 
-### 4. ui_process
+**Archivo:** `p2-client.c`
 
-**Archivo:** `ui_process.c`
+**Responsabilidad:** Interfaz de usuario que permite buscar o agregar canciones. Se conecta al servidor por TCP y mantiene la conexión abierta durante toda la sesión.
 
-**Responsabilidad:** Ser la interfaz de usuario mediante la cual se puede buscar una canción o agregar un nuevo registro al CSV. Se comunica con `csv_process` mediante FIFOs nombrados.
+La IP del servidor puede configurarse de tres maneras, en orden de prioridad:
+
+1. Argumento de línea de comandos: `./bin/p2-client 192.168.1.10`
+2. Variable de entorno: `export P2_SERVER_IP=192.168.1.10`
+3. Por defecto: `127.0.0.1`
 
 **Funciones expuestas:**
 
 | Función | Descripción |
 |---|---|
-| `print_menu()` | Imprime el menú de opciones en pantalla |
-| `option1(fdwrite, fdread)` | Solicita título y artista (opcional) al usuario, envía la consulta al servidor y muestra el resultado |
-| `option2(fdwrite, fdread)` | Solicita todos los campos de un nuevo registro, los valida y los envía al servidor para inserción |
+| `print_menu()` | Imprime el menú de opciones con colores ANSI |
+| `option1(sockfd)` | Solicita título y artista (opcional), envía la consulta y muestra resultados |
+| `option2(sockfd)` | Solicita y valida todos los campos de un nuevo registro, lo envía al servidor |
 
 **Protocolo de comunicación:**
 
-El proceso envía primero un entero que identifica la operación y luego la estructura correspondiente:
 ```c
-write(fdwrite, &identify, sizeof(int));  // 1 = buscar, 2 = insertar
-write(fdwrite, &query,    sizeof(Query)); // opcion 1
-write(fdwrite, &new_row,  sizeof(Row));   // opcion 2
+send_all(sockfd, &identify, sizeof(int));  // 1 = buscar, 2 = insertar, 0 = salir
+send_all(sockfd, &query,    sizeof(Query)); // opción 1
+send_all(sockfd, &new_row,  sizeof(Row));   // opción 2
 ```
 
-El servidor responde con una `Row` para búsquedas (con `id == -1` si no se encontró) o con un `int` de confirmación para inserciones.
+---
 
-### 5. utils
+### 5. utils_ui
 
-**Archivos:** `utils.h`, `utils.c`
+**Archivos:** `utils_ui.h`, `utils_ui.c`
 
-**Responsabilidad:** Proveer funciones de uso general compartidas entre los módulos del sistema, principalmente validación de entrada del usuario y manipulación de strings.
+**Responsabilidad:** Proveer funciones de validación de entrada del usuario y manipulación de strings, usadas exclusivamente por el cliente.
 
 **Funciones expuestas:**
 
 | Función | Descripción |
 |---|---|
 | `trim(text)` | Elimina espacios, tabulaciones y saltos de línea al inicio y final de un string |
-| `prompt_text(label, out, max_size)` | Muestra una etiqueta, lee la entrada del usuario, aplica trim y retorna 0 si el usuario ingresó "0" para volver |
-| `valid_date(date)` | Valida que una fecha tenga formato YYYY-MM-DD con mes y día en rango válido |
+| `prompt_text(label, out, max_size)` | Muestra una etiqueta, lee la entrada, aplica trim y retorna 0 si el usuario ingresó "0" |
+| `valid_date(date)` | Valida formato YYYY-MM-DD con mes y día en rango válido |
 | `valid_explicit(explicito)` | Valida que el valor sea exactamente "True" o "False" |
 | `valid_positive_int(buff)` | Valida que el string represente un entero positivo |
-| `valid_positive_double(buff)` | Valida que el string represente un número decimal positivo con un solo punto |
+| `valid_positive_double(buff)` | Valida que el string represente un decimal positivo con un solo punto |
 
 ---
 
 ### 6. common
 
-**Archivo:** `common.h`
+**Archivos:** `common.h`, `common.c`
 
-**Responsabilidad:** Centralizar las definiciones compartidas entre `ui_process` y `csv_process` para garantizar consistencia en la comunicación IPC.
+**Responsabilidad:** Centralizar las definiciones y funciones de red compartidas entre cliente y servidor.
 
-**Contenido:**
+**Contenido de `common.h`:**
+
 ```c
-#define FIFO_CLIENT_PATH "/tmp/client_fifo"
-#define FIFO_SERVER_PATH "/tmp/server_fifo"
+#define PORT 8080
 
 typedef struct {
     char title[512];
-    char artist[1024];
+    char artist[2048];
 } Query;
+
+int rcv_all(int sockfd, void *buffer, size_t length);
+int send_all(int sockfd, void *buffer, size_t length);
 ```
 
-Las rutas de los FIFOs se definen aquí para que ambos procesos usen exactamente las mismas sin duplicar constantes. La estructura `Query` define el formato del mensaje de búsqueda enviado de la UI al servidor.
+**Funciones de `common.c`:**
+
+| Función | Descripción |
+|---|---|
+| `send_all(sockfd, buffer, length)` | Envía exactamente `length` bytes, reintentando si `send()` envía parcial |
+| `rcv_all(sockfd, buffer, length)` | Recibe exactamente `length` bytes, reintentando si `recv()` recibe parcial |
+
+Estas funciones son necesarias porque TCP no garantiza que un solo `send()`/`recv()` transfiera la totalidad de los bytes solicitados.
