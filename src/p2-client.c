@@ -13,6 +13,9 @@
 #include "common.h"
 #include "csv_reader.h"
 #include "utils_ui.h"
+#include <termios.h>
+#include <sys/ioctl.h>
+#include <signal.h>
 
 /* ─── Menu ──────────────────────────────────────────────────────────────── */
 #define RESET   "\033[0m"
@@ -115,7 +118,7 @@ void option1(int sockfd){
         rcv_all(sockfd, &result, sizeof(Row));
         print_row(&result);
     } else{
-        printf("Se encontraron %d resultados:\n", count);
+        printf("\nSe encontraron %d resultados:\n\n", count);
         for(int i = 0; i < count; i++){
             if(rcv_all(sockfd, &result, sizeof(Row)) == -1){
                 perror("Error receiving search result row");
@@ -266,6 +269,18 @@ void option2(int sockfd){
     }
 }
 
+void waitKey(){
+    printf(RESET CYAN"Presiona CUALQUIER tecla para continuar\n" RESET);
+    fflush(stdout);
+    struct termios old, new;
+    tcgetattr(STDIN_FILENO, &old);      // guarda config actual
+    new = old;
+    new.c_lflag &= ~(ICANON | ECHO);   // desactiva buffer de línea y eco
+    tcsetattr(STDIN_FILENO, TCSANOW, &new);
+    getchar();                          // lee un solo caracter sin Enter
+    tcsetattr(STDIN_FILENO, TCSANOW, &old);  // restaura config original
+}
+
 /* ─── Main ──────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv){
@@ -316,17 +331,25 @@ int main(int argc, char **argv){
     printf("Conectado al servidor %s:%d (IP local: %s)\n", server_ip, PORT, local_ip);
 
     while(start){
+        fflush(stdout); 
         print_menu();
         fgets(buff, sizeof(buff), stdin);
         trim(buff);
         option = (short) atoi(buff);
 
+        fflush(stdout);
+        printf(RESET RED "Está seguro de continuar con la opción %hd? Presione Enter para continuar, otra tecla para regresar:" RESET, option);
+        fgets(buff, sizeof(buff), stdin);
+        if (buff[0] != '\n'){ continue;}
+
         switch(option){
             case 1:
                 option1(sockfd);
+                waitKey();
                 break;
             case 2:
                 option2(sockfd);
+                waitKey();
                 break;
             case 3:
                 printf("Saliendo del programa...\n");
@@ -336,11 +359,6 @@ int main(int argc, char **argv){
                 break;
             default:
                 printf("Opcion no valida. Intente nuevamente.\n");
-        }
-
-        if(start!=0){
-            printf(RESET RED"¿DESEAS REGRESAR AL MENÚ PRINCIPAL?" RESET" (Presiona cualquier letra para continuar) \n");
-            //Revisar como hacer esta parte
         }
     }
 
