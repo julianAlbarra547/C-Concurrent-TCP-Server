@@ -16,6 +16,10 @@
 #include <termios.h>
 #include <sys/ioctl.h>
 #include <signal.h>
+#include <linux/input.h>
+#include <dirent.h>
+
+#define KEYBOARD_DEVICE "event2" //Cambiar en base a la entrada de teclado. Revisar en /dev/input/by-id
 
 /* ─── Menu ──────────────────────────────────────────────────────────────── */
 #define RESET   "\033[0m"
@@ -269,16 +273,36 @@ void option2(int sockfd){
     }
 }
 
+//------------ Se accede a la capa 2: se accede a eventos generados por el kernel y para ello se lee un archivo
 void waitKey(){
-    printf(RESET CYAN"Presiona CUALQUIER tecla para continuar\n" RESET);
+    printf(RESET CYAN "Presiona CUALQUIER tecla para continuar\n" RESET);
     fflush(stdout);
-    struct termios old, new;
-    tcgetattr(STDIN_FILENO, &old);      // guarda config actual
-    new = old;
-    new.c_lflag &= ~(ICANON | ECHO);   // desactiva buffer de línea y eco
-    tcsetattr(STDIN_FILENO, TCSANOW, &new);
-    getchar();                          // lee un solo caracter sin Enter
-    tcsetattr(STDIN_FILENO, TCSANOW, &old);  // restaura config original
+    char path[80] = "/dev/input/";
+    strcat(path, KEYBOARD_DEVICE);
+    int fd = open(path, O_RDONLY);
+    if(fd < 0){
+        // fallback a termios si no se puede abrir el dispositivo
+        struct termios old, raw;
+        tcgetattr(STDIN_FILENO, &old);  // guarda config actual
+        raw = old;
+        raw.c_lflag &= ~(ICANON | ECHO); // desactiva buffer de línea y eco
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        getchar();                      // lee un solo caracter sin Enter
+        tcsetattr(STDIN_FILENO, TCSANOW, &old); // restaura config original
+        return;
+    }
+
+    struct input_event ev;
+
+    // espera hasta que se PRESIONE cualquier tecla (value == 1)
+    while(read(fd, &ev, sizeof(ev)) > 0){
+        if(ev.type == EV_KEY && ev.value == 1){
+            break;
+        }
+    }
+
+    close(fd);
+    tcflush(STDIN_FILENO, TCIFLUSH);
 }
 
 /* ─── Main ──────────────────────────────────────────────────────────────── */
@@ -333,6 +357,7 @@ int main(int argc, char **argv){
     while(start){
         fflush(stdout); 
         print_menu();
+
         fgets(buff, sizeof(buff), stdin);
         trim(buff);
         option = (short) atoi(buff);
